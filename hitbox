@@ -1,59 +1,105 @@
+-- Hitbox Editor with ESP Menu Button
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
 local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
 
--- Настройки подсветки
-local HighlightSettings = {
-    Distance = 100,
-    Color = Color3.fromRGB(255, 255, 255),
-    UsePlayerColor = false,
-    Active = false,
-    Transparency = 0.3,
-    HighlightR6 = true,
-    HighlightR15 = true
+-- Настройки
+local HitboxSettings = {
+    Size = Vector3.new(5, 5, 5),
+    Transparency = 0.5,
+    Color = Color3.fromRGB(255, 0, 0),
+    BodyHighlightColor = Color3.fromRGB(255, 255, 255),
+    Visible = true,
+    TeamCheck = false,
+    ThroughWalls = true,
+    Active = true,
+    HighlightBodyParts = true
 }
 
--- Списки частей тела
-local R6BodyParts = {"Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"}
+-- Добавляем настройки для ESP
+local ESPSettings = {
+    Enabled = false,
+    TeamCheck = false,
+    Boxes = true,
+    Names = true,
+    Health = true,
+    Distance = true
+}
+
+-- Сохраняем оригинальные размеры хитбоксов
+local OriginalSizes = {}
+
+local GUI = {
+    Open = true,
+    Dragging = false,
+    DragOffset = Vector2.new(0, 0)
+}
+
+-- Подсветка хитбоксов
+local HighlightParts = {}
+local BodyHighlights = {}
+
+-- ESP объекты
+local ESPObjects = {}
+
+-- Функция для запуска ESP скрипта
+local function LoadESPScript()
+    -- Удаляем старый ESP если есть
+    for _, obj in pairs(ESPObjects) do
+        if obj then
+            pcall(function() obj:Destroy() end)
+        end
+    end
+    ESPObjects = {}
+
+    -- Загружаем ESP скрипт
+    local success, err = pcall(function()
+        loadstring(game:HttpGet("https://raw.githubusercontent.com/masyaprouwu/Hit-box-and-esp-script/main/hitbox"))()
+    end)
+    
+    if not success then
+        warn("Failed to load ESP script: " .. err)
+    else
+        ESPSettings.Enabled = true
+    end
+end
+
+-- Функция для определения типа аватара (R6/R15)
+local function GetAvatarType(character)
+    if character:FindFirstChild("Humanoid") then
+        return character.Humanoid.RigType == Enum.HumanoidRigType.R6 and "R6" or "R15"
+    end
+    return "Unknown"
+end
+
+-- Списки частей тела для R6 и R15
+local R6BodyParts = {
+    "Head", "Torso", "Left Arm", "Right Arm", "Left Leg", "Right Leg"
+}
+
 local R15BodyParts = {
     "Head", "UpperTorso", "LowerTorso", "LeftUpperArm", "LeftLowerArm", "LeftHand",
     "RightUpperArm", "RightLowerArm", "RightHand", "LeftUpperLeg", "LeftLowerLeg", 
     "LeftFoot", "RightUpperLeg", "RightLowerLeg", "RightFoot"
 }
 
--- Хранилище подсветок
-local BodyHighlights = {}
-
--- Функция определения типа аватара
-local function GetAvatarType(character)
-    if character and character:FindFirstChild("Humanoid") then
-        return character.Humanoid.RigType == Enum.HumanoidRigType.R6 and "R6" or "R15"
-    end
-    return "Unknown"
-end
-
--- Создание подсветки
+-- Создание подсветки частей тела
 local function CreateBodyHighlight(character)
-    if not character or not HighlightSettings.Active then return end
+    if not character or not HitboxSettings.HighlightBodyParts then return end
+    
+    if BodyHighlights[character] then
+        for _, part in pairs(BodyHighlights[character]) do
+            if part then part:Destroy() end
+        end
+        BodyHighlights[character] = nil
+    end
     
     local avatarType = GetAvatarType(character)
-    if (avatarType == "R6" and not HighlightSettings.HighlightR6) or 
-       (avatarType == "R15" and not HighlightSettings.HighlightR15) then
-        return
-    end
-    
-    -- Удаляем старые подсветки
-    if BodyHighlights[character] then
-        for _, highlight in pairs(BodyHighlights[character]) do
-            if highlight then highlight:Destroy() end
-        end
-    end
-    
     local partsToHighlight = avatarType == "R6" and R6BodyParts or R15BodyParts
     local highlights = {}
-    local color = HighlightSettings.UsePlayerColor and character:FindFirstChild("Head") and character.Head.Color or HighlightSettings.Color
     
     for _, partName in pairs(partsToHighlight) do
         local part = character:FindFirstChild(partName)
@@ -64,10 +110,13 @@ local function CreateBodyHighlight(character)
             highlight.AlwaysOnTop = true
             highlight.ZIndex = 5
             highlight.Size = part.Size * 1.05
-            highlight.Transparency = HighlightSettings.Transparency
-            highlight.Color3 = color
-            highlight.Visible = true
+            highlight.Transparency = 0.3
+            highlight.Color3 = HitboxSettings.BodyHighlightColor
+            highlight.Visible = HitboxSettings.Visible and HitboxSettings.Active and 
+                               (not HitboxSettings.TeamCheck or character:FindFirstChildOfClass("Player") and 
+                               character:FindFirstChildOfClass("Player").Team ~= LocalPlayer.Team)
             highlight.Parent = part
+            
             table.insert(highlights, highlight)
         end
     end
@@ -75,15 +124,18 @@ local function CreateBodyHighlight(character)
     BodyHighlights[character] = highlights
 end
 
--- Обновление подсветок
+-- Обновление подсветки частей тела
 local function UpdateBodyHighlights()
     for character, highlights in pairs(BodyHighlights) do
         if character and character.Parent then
-            local color = HighlightSettings.UsePlayerColor and character:FindFirstChild("Head") and character.Head.Color or HighlightSettings.Color
             for _, highlight in pairs(highlights) do
                 if highlight and highlight.Adornee then
-                    highlight.Color3 = color
-                    highlight.Visible = HighlightSettings.Active
+                    highlight.Size = highlight.Adornee.Size * 1.05
+                    highlight.Visible = HitboxSettings.HighlightBodyParts and 
+                                       HitboxSettings.Visible and 
+                                       HitboxSettings.Active and 
+                                       (not HitboxSettings.TeamCheck or character:FindFirstChildOfClass("Player") and 
+                                       character:FindFirstChildOfClass("Player").Team ~= LocalPlayer.Team)
                 end
             end
         else
@@ -97,70 +149,113 @@ local function UpdateBodyHighlights()
     end
 end
 
--- Обработчики персонажей
-local function OnCharacterAdded(character)
-    CreateBodyHighlight(character)
+-- Создание обычной подсветки хитбокса
+local function CreateHighlight(character)
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return end
     
-    character.ChildAdded:Connect(function(child)
-        if table.find(R6BodyParts, child.Name) or table.find(R15BodyParts, child.Name) then
-            CreateBodyHighlight(character)
+    if HighlightParts[character] then
+        HighlightParts[character]:Destroy()
+    end
+    
+    local highlight = Instance.new("BoxHandleAdornment")
+    highlight.Name = "HitboxHighlight"
+    highlight.Adornee = character.HumanoidRootPart
+    highlight.AlwaysOnTop = true
+    highlight.ZIndex = 10
+    highlight.Size = HitboxSettings.Size
+    highlight.Transparency = HitboxSettings.Transparency
+    highlight.Color3 = HitboxSettings.Color
+    highlight.Visible = HitboxSettings.Visible and HitboxSettings.Active and 
+                       (not HitboxSettings.TeamCheck or character:FindFirstChildOfClass("Player") and 
+                       character:FindFirstChildOfClass("Player").Team ~= LocalPlayer.Team)
+    highlight.Parent = character.HumanoidRootPart
+    
+    HighlightParts[character] = highlight
+end
+
+-- Обновление всех подсветок
+local function UpdateHighlights()
+    for character, highlight in pairs(HighlightParts) do
+        if character and character:FindFirstChild("HumanoidRootPart") then
+            highlight.Size = HitboxSettings.Size
+            highlight.Transparency = HitboxSettings.Transparency
+            highlight.Color3 = HitboxSettings.Color
+            highlight.Visible = HitboxSettings.Visible and HitboxSettings.Active and 
+                              (not HitboxSettings.TeamCheck or character:FindFirstChildOfClass("Player") and 
+                              character:FindFirstChildOfClass("Player").Team ~= LocalPlayer.Team)
+        else
+            if highlight then highlight:Destroy() end
+            HighlightParts[character] = nil
         end
-    end)
+    end
     
-    local humanoid = character:WaitForChild("Humanoid")
-    humanoid.Died:Connect(function()
-        if BodyHighlights[character] then
-            for _, highlight in pairs(BodyHighlights[character]) do
+    UpdateBodyHighlights()
+end
+
+-- Функция полного сброса хитбоксов
+local function ResetHitboxes()
+    -- Возвращаем оригинальные размеры
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+                humanoidRootPart.Size = OriginalSizes[humanoidRootPart]
+                humanoidRootPart.CanCollide = true
+            end
+        end
+    end
+    
+    -- Удаляем все подсветки
+    for character, highlight in pairs(HighlightParts) do
+        if highlight then highlight:Destroy() end
+    end
+    HighlightParts = {}
+    
+    for character, highlights in pairs(BodyHighlights) do
+        if highlights then
+            for _, highlight in pairs(highlights) do
                 if highlight then highlight:Destroy() end
             end
-            BodyHighlights[character] = nil
         end
-    end)
-end
-
-local function OnPlayerAdded(player)
-    player.CharacterAdded:Connect(OnCharacterAdded)
-    if player.Character then
-        OnCharacterAdded(player.Character)
     end
-end
-
--- Инициализация игроков
-for _, player in ipairs(Players:GetPlayers()) do
-    if player ~= LocalPlayer then
-        OnPlayerAdded(player)
-    end
-end
-
-Players.PlayerRemoving:Connect(function(player)
-    if player.Character and BodyHighlights[player.Character] then
-        for _, highlight in pairs(BodyHighlights[player.Character]) do
-            if highlight then highlight:Destroy() end
+    BodyHighlights = {}
+    
+    -- Пересоздаем хитбоксы для всех игроков
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+            if humanoidRootPart then
+                OriginalSizes[humanoidRootPart] = humanoidRootPart.Size
+            end
+            
+            CreateHighlight(player.Character)
+            CreateBodyHighlight(player.Character)
         end
-        BodyHighlights[player.Character] = nil
     end
-end)
+    
+    UpdateHitboxes()
+    UpdateHighlights()
+end
 
--- Создание GUI
+-- Создаем GUI
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BodyHighlightGUI"
-ScreenGui.Parent = game:GetService("CoreGui")
+ScreenGui.Name = "HitboxEditor"
+ScreenGui.Parent = game.CoreGui
 
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 250, 0, 250)
-MainFrame.Position = UDim2.new(0.5, -125, 0.5, -125)
+MainFrame.Size = UDim2.new(0, 300, 0, 430) -- Увеличили высоту для новой кнопки
+MainFrame.Position = UDim2.new(0.5, -150, 0.5, -215)
 MainFrame.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Visible = true
+MainFrame.ClipsDescendants = true
 MainFrame.Parent = ScreenGui
 
 local UICorner = Instance.new("UICorner")
 UICorner.CornerRadius = UDim.new(0, 6)
 UICorner.Parent = MainFrame
 
--- Title Bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 30)
@@ -168,12 +263,16 @@ TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
 TitleBar.BorderSizePixel = 0
 TitleBar.Parent = MainFrame
 
+local UICorner2 = Instance.new("UICorner")
+UICorner2.CornerRadius = UDim.new(0, 6)
+UICorner2.Parent = TitleBar
+
 local Title = Instance.new("TextLabel")
 Title.Name = "Title"
 Title.Size = UDim2.new(1, -30, 1, 0)
 Title.Position = UDim2.new(0, 10, 0, 0)
 Title.BackgroundTransparency = 1
-Title.Text = "Body Highlight"
+Title.Text = "Hitbox Editor"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.TextXAlignment = Enum.TextXAlignment.Left
 Title.Font = Enum.Font.GothamBold
@@ -192,7 +291,10 @@ CloseButton.Font = Enum.Font.GothamBold
 CloseButton.TextSize = 14
 CloseButton.Parent = TitleBar
 
--- Content Frame
+local UICorner3 = Instance.new("UICorner")
+UICorner3.CornerRadius = UDim.new(0, 6)
+UICorner3.Parent = CloseButton
+
 local Content = Instance.new("Frame")
 Content.Name = "Content"
 Content.Size = UDim2.new(1, -10, 1, -40)
@@ -200,244 +302,505 @@ Content.Position = UDim2.new(0, 5, 0, 35)
 Content.BackgroundTransparency = 1
 Content.Parent = MainFrame
 
--- Distance Slider
-local DistanceSlider = Instance.new("Frame")
-DistanceSlider.Name = "DistanceSlider"
-DistanceSlider.Size = UDim2.new(1, 0, 0, 40)
-DistanceSlider.BackgroundTransparency = 1
-DistanceSlider.Parent = Content
+-- Добавляем текстовое поле для быстрого ввода размера
+local QuickSizeFrame = Instance.new("Frame")
+QuickSizeFrame.Name = "QuickSizeFrame"
+QuickSizeFrame.Size = UDim2.new(1, 0, 0, 30)
+QuickSizeFrame.Position = UDim2.new(0, 0, 0, 0)
+QuickSizeFrame.BackgroundTransparency = 1
+QuickSizeFrame.Parent = Content
 
-local DistanceLabel = Instance.new("TextLabel")
-DistanceLabel.Name = "DistanceLabel"
-DistanceLabel.Size = UDim2.new(1, 0, 0, 15)
-DistanceLabel.Text = "Distance: " .. HighlightSettings.Distance
-DistanceLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-DistanceLabel.TextXAlignment = Enum.TextXAlignment.Left
-DistanceLabel.Font = Enum.Font.Gotham
-DistanceLabel.TextSize = 12
-DistanceLabel.BackgroundTransparency = 1
-DistanceLabel.Parent = DistanceSlider
+local QuickSizeLabel = Instance.new("TextLabel")
+QuickSizeLabel.Name = "QuickSizeLabel"
+QuickSizeLabel.Size = UDim2.new(0.5, -5, 1, 0)
+QuickSizeLabel.Position = UDim2.new(0, 0, 0, 0)
+QuickSizeLabel.BackgroundTransparency = 1
+QuickSizeLabel.Text = "Quick Size:"
+QuickSizeLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+QuickSizeLabel.TextXAlignment = Enum.TextXAlignment.Left
+QuickSizeLabel.Font = Enum.Font.Gotham
+QuickSizeLabel.TextSize = 12
+QuickSizeLabel.Parent = QuickSizeFrame
 
-local SliderTrack = Instance.new("Frame")
-SliderTrack.Name = "SliderTrack"
-SliderTrack.Size = UDim2.new(1, 0, 0, 5)
-SliderTrack.Position = UDim2.new(0, 0, 0, 20)
-SliderTrack.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
-SliderTrack.BorderSizePixel = 0
-SliderTrack.Parent = DistanceSlider
+local QuickSizeBox = Instance.new("TextBox")
+QuickSizeBox.Name = "QuickSizeBox"
+QuickSizeBox.Size = UDim2.new(0.5, -5, 1, 0)
+QuickSizeBox.Position = UDim2.new(0.5, 0, 0, 0)
+QuickSizeBox.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+QuickSizeBox.BorderSizePixel = 0
+QuickSizeBox.Text = "5"
+QuickSizeBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+QuickSizeBox.Font = Enum.Font.Gotham
+QuickSizeBox.TextSize = 12
+QuickSizeBox.Parent = QuickSizeFrame
 
-local SliderFill = Instance.new("Frame")
-SliderFill.Name = "SliderFill"
-SliderFill.Size = UDim2.new(HighlightSettings.Distance / 500, 0, 1, 0)
-SliderFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
-SliderFill.BorderSizePixel = 0
-SliderFill.Parent = SliderTrack
+local UICorner4 = Instance.new("UICorner")
+UICorner4.CornerRadius = UDim.new(0, 4)
+UICorner4.Parent = QuickSizeBox
 
-local SliderHandle = Instance.new("TextButton")
-SliderHandle.Name = "SliderHandle"
-SliderHandle.Size = UDim2.new(0, 15, 0, 15)
-SliderHandle.Position = UDim2.new(HighlightSettings.Distance / 500, -7, 0.5, -7)
-SliderHandle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
-SliderHandle.Text = ""
-SliderHandle.Parent = SliderTrack
+-- Функция для создания ползунка
+local function CreateSlider(parent, name, text, defaultValue, minValue, maxValue, positionY, callback)
+    local sliderFrame = Instance.new("Frame")
+    sliderFrame.Name = name .. "Frame"
+    sliderFrame.Size = UDim2.new(1, 0, 0, 40)
+    sliderFrame.Position = UDim2.new(0, 0, 0, positionY)
+    sliderFrame.BackgroundTransparency = 1
+    sliderFrame.Parent = parent
 
--- Color Button
-local ColorButton = Instance.new("TextButton")
-ColorButton.Name = "ColorButton"
-ColorButton.Size = UDim2.new(1, 0, 0, 25)
-ColorButton.Position = UDim2.new(0, 0, 0, 50)
-ColorButton.BackgroundColor3 = HighlightSettings.Color
-ColorButton.Text = "Highlight Color"
-ColorButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ColorButton.Font = Enum.Font.Gotham
-ColorButton.TextSize = 12
-ColorButton.Parent = Content
+    local label = Instance.new("TextLabel")
+    label.Name = name .. "Label"
+    label.Size = UDim2.new(1, 0, 0, 15)
+    label.Position = UDim2.new(0, 0, 0, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text .. ": " .. defaultValue
+    label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    label.TextXAlignment = Enum.TextXAlignment.Left
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.Parent = sliderFrame
 
--- Skin Color Button
-local SkinColorButton = Instance.new("TextButton")
-SkinColorButton.Name = "SkinColorButton"
-SkinColorButton.Size = UDim2.new(1, 0, 0, 25)
-SkinColorButton.Position = UDim2.new(0, 0, 0, 80)
-SkinColorButton.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
-SkinColorButton.Text = "Use Player Color"
-SkinColorButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-SkinColorButton.Font = Enum.Font.Gotham
-SkinColorButton.TextSize = 12
-SkinColorButton.Parent = Content
+    local slider = Instance.new("Frame")
+    slider.Name = name .. "Slider"
+    slider.Size = UDim2.new(1, 0, 0, 5)
+    slider.Position = UDim2.new(0, 0, 0, 20)
+    slider.BackgroundColor3 = Color3.fromRGB(60, 60, 60)
+    slider.BorderSizePixel = 0
+    slider.Parent = sliderFrame
 
--- R6/R15 Buttons
-local R6Button = Instance.new("TextButton")
-R6Button.Name = "R6Button"
-R6Button.Size = UDim2.new(0.48, 0, 0, 25)
-R6Button.Position = UDim2.new(0, 0, 0, 110)
-R6Button.BackgroundColor3 = HighlightSettings.HighlightR6 and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-R6Button.Text = "R6: " .. (HighlightSettings.HighlightR6 and "ON" or "OFF")
-R6Button.TextColor3 = Color3.fromRGB(255, 255, 255)
-R6Button.Font = Enum.Font.Gotham
-R6Button.TextSize = 12
-R6Button.Parent = Content
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(1, 0)
+    UICorner.Parent = slider
 
-local R15Button = Instance.new("TextButton")
-R15Button.Name = "R15Button"
-R15Button.Size = UDim2.new(0.48, 0, 0, 25)
-R15Button.Position = UDim2.new(0.52, 0, 0, 110)
-R15Button.BackgroundColor3 = HighlightSettings.HighlightR15 and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-R15Button.Text = "R15: " .. (HighlightSettings.HighlightR15 and "ON" or "OFF")
-R15Button.TextColor3 = Color3.fromRGB(255, 255, 255)
-R15Button.Font = Enum.Font.Gotham
-R15Button.TextSize = 12
-R15Button.Parent = Content
+    local fill = Instance.new("Frame")
+    fill.Name = "Fill"
+    fill.Size = UDim2.new((defaultValue - minValue) / (maxValue - minValue), 0, 1, 0)
+    fill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+    fill.BorderSizePixel = 0
+    fill.Parent = slider
 
--- Toggle Button
-local ToggleButton = Instance.new("TextButton")
-ToggleButton.Name = "ToggleButton"
-ToggleButton.Size = UDim2.new(1, 0, 0, 25)
-ToggleButton.Position = UDim2.new(0, 0, 0, 140)
-ToggleButton.BackgroundColor3 = HighlightSettings.Active and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-ToggleButton.Text = HighlightSettings.Active and "ON" or "OFF"
-ToggleButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleButton.Font = Enum.Font.GothamBold
-ToggleButton.TextSize = 14
-ToggleButton.Parent = Content
+    local UICorner2 = Instance.new("UICorner")
+    UICorner2.CornerRadius = UDim.new(1, 0)
+    UICorner2.Parent = fill
 
--- Добавляем скругления углов
-for _, button in pairs({ColorButton, SkinColorButton, R6Button, R15Button, ToggleButton}) do
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(0, 4)
-    corner.Parent = button
-end
+    local handle = Instance.new("TextButton")
+    handle.Name = "Handle"
+    handle.Size = UDim2.new(0, 15, 0, 15)
+    handle.Position = UDim2.new((defaultValue - minValue) / (maxValue - minValue), -7, 0.5, -7)
+    handle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+    handle.Text = ""
+    handle.Parent = slider
 
-for _, frame in pairs({SliderTrack, SliderFill, SliderHandle}) do
-    local corner = Instance.new("UICorner")
-    corner.CornerRadius = UDim.new(1, 0)
-    corner.Parent = frame
-end
+    local UICorner3 = Instance.new("UICorner")
+    UICorner3.CornerRadius = UDim.new(1, 0)
+    UICorner3.Parent = handle
 
--- Функция перетаскивания окна
-local dragging
-local dragInput
-local dragStart
-local startPos
+    local dragging = false
 
-local function updateInput(input)
-    local delta = input.Position - dragStart
-    MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
-end
-
-TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+    handle.MouseButton1Down:Connect(function()
         dragging = true
-        dragStart = input.Position
-        startPos = MainFrame.Position
-        
-        input.Changed:Connect(function()
-            if input.UserInputState == Enum.UserInputState.End then
-                dragging = false
-            end
-        end)
-    end
+    end)
+
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local xPos = (input.Position.X - slider.AbsolutePosition.X) / slider.AbsoluteSize.X
+            xPos = math.clamp(xPos, 0, 1)
+            local value = minValue + (maxValue - minValue) * xPos
+            value = math.floor(value * 10) / 10
+            
+            fill.Size = UDim2.new(xPos, 0, 1, 0)
+            handle.Position = UDim2.new(xPos, -7, 0.5, -7)
+            label.Text = text .. ": " .. value
+            callback(value)
+            QuickSizeBox.Text = tostring(value)
+        end
+    end)
+
+    return sliderFrame
+end
+
+-- Создаем ползунки
+local SizeXSlider = CreateSlider(Content, "SizeX", "Hitbox Width", HitboxSettings.Size.X, 1, 20, 30, function(value)
+    HitboxSettings.Size = Vector3.new(value, HitboxSettings.Size.Y, HitboxSettings.Size.Z)
 end)
 
-TitleBar.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement then
-        dragInput = input
-    end
+local SizeYSlider = CreateSlider(Content, "SizeY", "Hitbox Height", HitboxSettings.Size.Y, 1, 20, 70, function(value)
+    HitboxSettings.Size = Vector3.new(HitboxSettings.Size.X, value, HitboxSettings.Size.Z)
 end)
 
-UserInputService.InputChanged:Connect(function(input)
-    if input == dragInput and dragging then
-        updateInput(input)
-    end
+local SizeZSlider = CreateSlider(Content, "SizeZ", "Hitbox Depth", HitboxSettings.Size.Z, 1, 20, 110, function(value)
+    HitboxSettings.Size = Vector3.new(HitboxSettings.Size.X, HitboxSettings.Size.Y, value)
 end)
 
--- Обработчики кнопок
-local function UpdateAllHighlights()
-    if HighlightSettings.Active then
+-- Функция для создания кнопки
+local function CreateButton(parent, name, text, positionY, callback)
+    local button = Instance.new("TextButton")
+    button.Name = name
+    button.Size = UDim2.new(1, 0, 0, 25)
+    button.Position = UDim2.new(0, 0, 0, positionY)
+    button.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    button.BorderSizePixel = 0
+    button.Text = text
+    button.TextColor3 = Color3.fromRGB(255, 255, 255)
+    button.Font = Enum.Font.Gotham
+    button.TextSize = 12
+    button.Parent = parent
+
+    local UICorner = Instance.new("UICorner")
+    UICorner.CornerRadius = UDim.new(0, 4)
+    UICorner.Parent = button
+
+    button.MouseButton1Click:Connect(callback)
+    
+    return button
+end
+
+-- Создаем кнопки
+local ToggleHighlight = CreateButton(Content, "ToggleHighlight", "Highlight: ON", 150, function()
+    HitboxSettings.Visible = not HitboxSettings.Visible
+    ToggleHighlight.Text = "Highlight: " .. (HitboxSettings.Visible and "ON" or "OFF")
+    UpdateHighlights()
+end)
+
+local TeamCheck = CreateButton(Content, "TeamCheck", "Team Check: OFF", 180, function()
+    HitboxSettings.TeamCheck = not HitboxSettings.TeamCheck
+    TeamCheck.Text = "Team Check: " .. (HitboxSettings.TeamCheck and "ON" or "OFF")
+    UpdateHighlights()
+end)
+
+local ToggleActive = CreateButton(Content, "ToggleActive", "Active: ON", 210, function()
+    HitboxSettings.Active = not HitboxSettings.Active
+    ToggleActive.Text = "Active: " .. (HitboxSettings.Active and "ON" or "OFF")
+    
+    if HitboxSettings.Active then
+        UpdateHitboxes()
+        UpdateHighlights()
+    else
+        -- Возвращаем оригинальные размеры
         for _, player in ipairs(Players:GetPlayers()) do
             if player ~= LocalPlayer and player.Character then
-                CreateBodyHighlight(player.Character)
-            end
-        end
-    else
-        for character, highlights in pairs(BodyHighlights) do
-            if highlights then
-                for _, highlight in pairs(highlights) do
-                    if highlight then highlight:Destroy() end
+                local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+                    humanoidRootPart.Size = OriginalSizes[humanoidRootPart]
+                    humanoidRootPart.CanCollide = true
                 end
             end
         end
-        BodyHighlights = {}
+        
+        -- Скрываем подсветки
+        for character, highlight in pairs(HighlightParts) do
+            if highlight then
+                highlight.Visible = false
+            end
+        end
+        
+        for character, highlights in pairs(BodyHighlights) do
+            if highlights then
+                for _, highlight in pairs(highlights) do
+                    if highlight then
+                        highlight.Visible = false
+                    end
+                end
+            end
+        end
     end
-end
-
-ColorButton.MouseButton1Click:Connect(function()
-    HighlightSettings.Color = Color3.fromRGB(math.random(255), math.random(255), math.random(255))
-    ColorButton.BackgroundColor3 = HighlightSettings.Color
-    HighlightSettings.UsePlayerColor = false
-    SkinColorButton.Text = "Use Player Color"
-    UpdateAllHighlights()
 end)
 
-SkinColorButton.MouseButton1Click:Connect(function()
-    HighlightSettings.UsePlayerColor = not HighlightSettings.UsePlayerColor
-    SkinColorButton.Text = HighlightSettings.UsePlayerColor and "Using Player Color" or "Use Player Color"
-    UpdateAllHighlights()
+local ToggleBodyHighlight = CreateButton(Content, "ToggleBodyHighlight", "Body Highlight: ON", 240, function()
+    HitboxSettings.HighlightBodyParts = not HitboxSettings.HighlightBodyParts
+    ToggleBodyHighlight.Text = "Body Highlight: " .. (HitboxSettings.HighlightBodyParts and "ON" or "OFF")
+    UpdateHighlights()
 end)
 
-R6Button.MouseButton1Click:Connect(function()
-    HighlightSettings.HighlightR6 = not HighlightSettings.HighlightR6
-    R6Button.Text = "R6: " .. (HighlightSettings.HighlightR6 and "ON" or "OFF")
-    R6Button.BackgroundColor3 = HighlightSettings.HighlightR6 and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-    UpdateAllHighlights()
+-- Добавляем кнопку перезапуска хитбоксов
+local ResetButton = CreateButton(Content, "ResetButton", "Reset Hitboxes", 270, function()
+    ResetHitboxes()
 end)
 
-R15Button.MouseButton1Click:Connect(function()
-    HighlightSettings.HighlightR15 = not HighlightSettings.HighlightR15
-    R15Button.Text = "R15: " .. (HighlightSettings.HighlightR15 and "ON" or "OFF")
-    R15Button.BackgroundColor3 = HighlightSettings.HighlightR15 and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-    UpdateAllHighlights()
+-- Добавляем кнопку ESP Menu
+local ESPButton = CreateButton(Content, "ESPButton", "ESP Menu", 300, function()
+    LoadESPScript()
 end)
 
-ToggleButton.MouseButton1Click:Connect(function()
-    HighlightSettings.Active = not HighlightSettings.Active
-    ToggleButton.Text = HighlightSettings.Active and "ON" or "OFF"
-    ToggleButton.BackgroundColor3 = HighlightSettings.Active and Color3.fromRGB(0, 170, 0) or Color3.fromRGB(170, 0, 0)
-    UpdateAllHighlights()
+-- Обработчик ввода в текстовое поле
+QuickSizeBox.FocusLost:Connect(function(enterPressed)
+    local value = tonumber(QuickSizeBox.Text)
+    if value and value >= 1 and value <= 20 then
+        HitboxSettings.Size = Vector3.new(value, value, value)
+        QuickSizeBox.Text = tostring(value)
+        
+        -- Обновляем ползунки
+        for _, slider in pairs({SizeXSlider, SizeYSlider, SizeZSlider}) do
+            local fill = slider:FindFirstChild("SizeXSlider") and slider:FindFirstChild("SizeXSlider"):FindFirstChild("Fill") or
+                         slider:FindFirstChild("SizeYSlider") and slider:FindFirstChild("SizeYSlider"):FindFirstChild("Fill") or
+                         slider:FindFirstChild("SizeZSlider") and slider:FindFirstChild("SizeZSlider"):FindFirstChild("Fill")
+            local handle = slider:FindFirstChild("SizeXSlider") and slider:FindFirstChild("SizeXSlider"):FindFirstChild("Handle") or
+                          slider:FindFirstChild("SizeYSlider") and slider:FindFirstChild("SizeYSlider"):FindFirstChild("Handle") or
+                          slider:FindFirstChild("SizeZSlider") and slider:FindFirstChild("SizeZSlider"):FindFirstChild("Handle")
+            local label = slider:FindFirstChild("SizeXLabel") or slider:FindFirstChild("SizeYLabel") or slider:FindFirstChild("SizeZLabel")
+            
+            if fill and handle and label then
+                local xPos = (value - 1) / 19
+                fill.Size = UDim2.new(xPos, 0, 1, 0)
+                handle.Position = UDim2.new(xPos, -7, 0.5, -7)
+                label.Text = label.Text:gsub(": %d+%.?%d*", ": " .. value)
+            end
+        end
+        
+        UpdateHitboxes()
+        UpdateHighlights()
+    else
+        QuickSizeBox.Text = tostring(HitboxSettings.Size.X)
+    end
 end)
 
+-- Обработчики событий GUI
 CloseButton.MouseButton1Click:Connect(function()
-    MainFrame.Visible = not MainFrame.Visible
+    GUI.Open = not GUI.Open
+    MainFrame.Visible = GUI.Open
+    HitboxSettings.Active = GUI.Open
+    ToggleActive.Text = "Active: " .. (HitboxSettings.Active and "ON" or "OFF")
+    
+    if GUI.Open then
+        UpdateHitboxes()
+        UpdateHighlights()
+    else
+        -- Возвращаем оригинальные размеры
+        for _, player in ipairs(Players:GetPlayers()) do
+            if player ~= LocalPlayer and player.Character then
+                local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+                    humanoidRootPart.Size = OriginalSizes[humanoidRootPart]
+                    humanoidRootPart.CanCollide = true
+                end
+            end
+        end
+        
+        -- Скрываем подсветки
+        for character, highlight in pairs(HighlightParts) do
+            if highlight then
+                highlight.Visible = false
+            end
+        end
+        
+        for character, highlights in pairs(BodyHighlights) do
+            if highlights then
+                for _, highlight in pairs(highlights) do
+                    if highlight then
+                        highlight.Visible = false
+                    end
+                end
+            end
+        end
+    end
 end)
 
--- Ползунок расстояния
-local sliderDragging = false
-
-SliderHandle.MouseButton1Down:Connect(function()
-    sliderDragging = true
-end)
-
-UserInputService.InputEnded:Connect(function(input)
+-- Перетаскивание GUI
+TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        sliderDragging = false
+        GUI.Dragging = true
+        GUI.DragOffset = Vector2.new(input.Position.X, input.Position.Y) - Vector2.new(MainFrame.AbsolutePosition.X, MainFrame.AbsolutePosition.Y)
+    end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        GUI.Dragging = false
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if sliderDragging and input.UserInputType == Enum.UserInputType.MouseMovement then
-        local xPos = math.clamp((input.Position.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
-        local value = math.floor(50 + (500 - 50) * xPos)
-        HighlightSettings.Distance = value
-        DistanceLabel.Text = "Distance: " .. value
-        SliderFill.Size = UDim2.new(xPos, 0, 1, 0)
-        SliderHandle.Position = UDim2.new(xPos, -7, 0.5, -7)
+    if GUI.Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local mousePos = UserInputService:GetMouseLocation()
+        MainFrame.Position = UDim2.new(0, mousePos.X - GUI.DragOffset.X, 0, mousePos.Y - GUI.DragOffset.Y)
     end
 end)
 
--- Горячая клавиша F5
+-- Обработчик добавления персонажа
+local function OnCharacterAdded(character)
+    -- Сохраняем оригинальный размер
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if humanoidRootPart then
+        OriginalSizes[humanoidRootPart] = humanoidRootPart.Size
+    end
+    
+    CreateHighlight(character)
+    CreateBodyHighlight(character)
+    
+    -- Отслеживаем изменения в частях тела
+    character.ChildAdded:Connect(function(child)
+        if table.find(R6BodyParts, child.Name) or table.find(R15BodyParts, child.Name) then
+            CreateBodyHighlight(character)
+        end
+    end)
+    
+    character.ChildRemoved:Connect(function(child)
+        if BodyHighlights[character] and (table.find(R6BodyParts, child.Name) or table.find(R15BodyParts, child.Name)) then
+            CreateBodyHighlight(character)
+        end
+    end)
+    
+    -- Обработчик смерти персонажа
+    local humanoid = character:WaitForChild("Humanoid")
+    humanoid.Died:Connect(function()
+        -- Удаляем подсветки для мертвого персонажа
+        if HighlightParts[character] then
+            HighlightParts[character]:Destroy()
+            HighlightParts[character] = nil
+        end
+        
+        if BodyHighlights[character] then
+            for _, highlight in pairs(BodyHighlights[character]) do
+                if highlight then highlight:Destroy() end
+            end
+            BodyHighlights[character] = nil
+        end
+        
+        -- Восстанавливаем оригинальный размер
+        local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+            humanoidRootPart.Size = OriginalSizes[humanoidRootPart]
+            humanoidRootPart.CanCollide = true
+        end
+    end)
+end
+
+-- Обработчик добавления игрока
+local function OnPlayerAdded(player)
+    player.CharacterAdded:Connect(OnCharacterAdded)
+    if player.Character then
+        OnCharacterAdded(player.Character)
+    end
+end
+
+-- Инициализация для существующих игроков
+for _, player in ipairs(Players:GetPlayers()) do
+    if player ~= LocalPlayer then
+        OnPlayerAdded(player)
+    end
+end
+
+-- Обработчик выхода игрока
+Players.PlayerRemoving:Connect(function(player)
+    if player.Character then
+        if HighlightParts[player.Character] then
+            HighlightParts[player.Character]:Destroy()
+            HighlightParts[player.Character] = nil
+        end
+        
+        if BodyHighlights[player.Character] then
+            for _, highlight in pairs(BodyHighlights[player.Character]) do
+                if highlight then highlight:Destroy() end
+            end
+            BodyHighlights[player.Character] = nil
+        end
+        
+        -- Удаляем из сохраненных размеров
+        local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+        if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+            OriginalSizes[humanoidRootPart] = nil
+        end
+    end
+end)
+
+-- Изменение хитбоксов
+local function GetHitbox(character)
+    if not character then return end
+    
+    local humanoidRootPart = character:FindFirstChild("HumanoidRootPart")
+    if not humanoidRootPart then return end
+    
+    return humanoidRootPart
+end
+
+local function UpdateHitboxes()
+    if not HitboxSettings.Active then return end
+    
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player ~= LocalPlayer and player.Character then
+            local hitbox = GetHitbox(player.Character)
+            if hitbox then
+                hitbox.Size = HitboxSettings.Size
+                hitbox.CanCollide = false
+            end
+        end
+    end
+end
+
+-- Основной цикл
+RunService.Heartbeat:Connect(function()
+    UpdateHitboxes()
+    UpdateHighlights()
+end)
+
+-- Горячая клавиша для открытия/закрытия GUI (F5)
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if not gameProcessed and input.KeyCode == Enum.KeyCode.F5 then
-        MainFrame.Visible = not MainFrame.Visible
+        GUI.Open = not GUI.Open
+        MainFrame.Visible = GUI.Open
+        HitboxSettings.Active = GUI.Open
+        ToggleActive.Text = "Active: " .. (HitboxSettings.Active and "ON" or "OFF")
+        
+        -- Анимация
+        if GUI.Open then
+            MainFrame.Visible = true
+            MainFrame.Size = UDim2.new(0, 0, 0, 0)
+            MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
+            
+            local tween = TweenService:Create(
+                MainFrame,
+                TweenInfo.new(0.3, Enum.EasingStyle.Quad),
+                {Size = UDim2.new(0, 300, 0, 430), Position = UDim2.new(0.5, -150, 0.5, -215)}
+            )
+            tween:Play()
+            
+            UpdateHitboxes()
+            UpdateHighlights()
+        else
+            local tween = TweenService:Create(
+                MainFrame,
+                TweenInfo.new(0.3, Enum.EasingStyle.Quad),
+                {Size = UDim2.new(0, 0, 0, 0), Position = UDim2.new(0.5, 0, 0.5, 0)}
+            )
+            tween.Completed:Connect(function()
+                MainFrame.Visible = false
+            end)
+            tween:Play()
+            
+            -- Возвращаем оригинальные размеры
+            for _, player in ipairs(Players:GetPlayers()) do
+                if player ~= LocalPlayer and player.Character then
+                    local humanoidRootPart = player.Character:FindFirstChild("HumanoidRootPart")
+                    if humanoidRootPart and OriginalSizes[humanoidRootPart] then
+                        humanoidRootPart.Size = OriginalSizes[humanoidRootPart]
+                        humanoidRootPart.CanCollide = true
+                    end
+                end
+            end
+            
+            -- Скрываем подсветки
+            for character, highlight in pairs(HighlightParts) do
+                if highlight then
+                    highlight.Visible = false
+                end
+            end
+            
+            for character, highlights in pairs(BodyHighlights) do
+                if highlights then
+                    for _, highlight in pairs(highlights) do
+                        if highlight then
+                            highlight.Visible = false
+                        end
+                    end
+                end
+            end
+        end
     end
 end)
 
-print("Body Highlight loaded! Press F5 to toggle GUI.")
+print("Hitbox Editor loaded! Press F5 to toggle GUI.")
